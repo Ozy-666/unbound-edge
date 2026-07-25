@@ -168,18 +168,20 @@ two binaries that must not be swapped, and the validate-before-swap ordering.
 
 An honest list of what these scripts do *not* do, for anyone considering them:
 
-1. ~~No integrity check on the downloaded tarball.~~ **Fixed** in `unbound-update.sh`:
-   SHA256 is now verified against NLnet Labs before the archive is unpacked, and a
-   mismatch aborts. **The OpenSSL fallback still has no verification** — check it by hand
-   if you use that path.
+1. ~~No integrity check on the downloaded tarball.~~ **Fixed in both scripts.** SHA256 is
+   verified against NLnet Labs before the archive is unpacked, and a mismatch aborts;
+   PGP is checked when the signing key is already trusted locally. The block is
+   duplicated rather than shared, deliberately — the OpenSSL script is the break-glass
+   path and must stay runnable on its own.
 2. **Brief resolution outage.** The service is stopped, three binaries are copied, then it
    is started — a short window with no resolver. Acceptable for a single-host edge, worth
    knowing before scripting it into anything automated.
 3. **Backups accumulate.** Every run leaves five `.bak.<timestamp>` copies in `/usr/sbin/`
    and they are never pruned.
-4. **The two scripts verify different things.** The BoringSSL script checks the linkage,
-   runs a live query and confirms the DNSSEC `ad` flag; the OpenSSL fallback checks neither
-   the linkage nor DNSSEC. If you rely on the fallback, verify by hand afterwards.
+4. ~~The two scripts verify different things.~~ **Fixed — now at parity.** Both confirm
+   the expected SSL linkage *before* swapping (the OpenSSL script aborts if it somehow
+   produced a BoringSSL-linked binary, e.g. from a stale `./configure` cache), then check
+   the live query and the DNSSEC `ad` flag afterwards.
 5. **`make -j` vs targeted targets.** The OpenSSL script builds everything; the BoringSSL
    one builds only the four needed targets. The latter is deliberate — see the
    `unbound-anchor` note above.

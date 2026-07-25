@@ -11,12 +11,13 @@
 # ⚠️  HOST-SPECIFIC — NOT A PORTABLE INSTALLER. Same caveats as
 # unbound-update.sh: -march=znver2 (AMD Zen 2 only, SIGILL elsewhere),
 # hardcoded /root/nginx-build paths, a non-standard conf-file location,
-# binaries copied over the distro's /usr/sbin, systemd assumed, and NO
-# SHA256/PGP verification of the downloaded tarball.
+# binaries copied over the distro's /usr/sbin, and systemd assumed.
 #
-# Unlike the BoringSSL script, this one does NOT verify the resulting binary's
-# SSL linkage and does NOT check the DNSSEC `ad` flag after the swap — verify
-# by hand if you rely on this path.
+# Verification is at parity with unbound-update.sh: the tarball's SHA256 is
+# checked against nlnetlabs.nl before it is unpacked (fatal on mismatch, with
+# PGP when the signing key is trusted locally), the new binary's OpenSSL
+# linkage is confirmed before the swap, and the live query plus the DNSSEC
+# `ad` flag are checked afterwards.
 # See the README's "Reusing this on another host" section.
 # ============================================================================
 set -e
@@ -55,6 +56,54 @@ wget -qO unbound-latest.tar.gz https://nlnetlabs.nl/downloads/unbound/unbound-la
 
 DIR_NAME=$(tar -tzf unbound-latest.tar.gz | head -1 | cut -f1 -d"/")
 LATEST_VER=${DIR_NAME#unbound-}
+
+# ---------------------------------------------------------------------------
+# 1c. Verify the tarball BEFORE unpacking or building it as root.
+#     HTTPS authenticates nlnetlabs.nl, not the artefact. Only versioned
+#     checksums are published (unbound-latest.tar.gz.sha256 is a 404), so the
+#     version is detected from the archive first, then its checksum fetched.
+#     SHA256 mismatch is FATAL. PGP is checked when a keyring already trusts
+#     the signer; a missing key warns rather than aborting.
+#
+#     Deliberately duplicated from unbound-update.sh rather than sourced from a
+#     shared helper: this is the break-glass fallback and must stay runnable on
+#     its own, even if the rest of the tooling is missing or broken.
+# ---------------------------------------------------------------------------
+echo "==== 1c. Verifying unbound-${LATEST_VER}.tar.gz ===="
+BASE_URL="https://nlnetlabs.nl/downloads/unbound"
+EXPECTED_SHA=$(curl -fsSL "${BASE_URL}/unbound-${LATEST_VER}.tar.gz.sha256" 2>/dev/null \
+    | grep -oiE '[0-9a-f]{64}' | head -1)
+ACTUAL_SHA=$(sha256sum unbound-latest.tar.gz | cut -d' ' -f1)
+if [ -z "$EXPECTED_SHA" ]; then
+    echo "❌ Could not fetch the published SHA256 for ${LATEST_VER} — refusing to build."
+    echo "   Check ${BASE_URL}/ by hand; do not skip this on a security update."
+    exit 1
+fi
+if [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
+    echo "❌ SHA256 MISMATCH — the tarball is NOT what upstream published. Aborting."
+    echo "   expected: $EXPECTED_SHA"
+    echo "   actual:   $ACTUAL_SHA"
+    exit 1
+fi
+echo "✅ SHA256 verified: $ACTUAL_SHA"
+
+if command -v gpg >/dev/null 2>&1 \
+   && curl -fsSL -o unbound-latest.tar.gz.asc "${BASE_URL}/unbound-${LATEST_VER}.tar.gz.asc" 2>/dev/null; then
+    GPG_OUT=$(gpg --verify unbound-latest.tar.gz.asc unbound-latest.tar.gz 2>&1) && GPG_RC=0 || GPG_RC=$?
+    if [ "$GPG_RC" -eq 0 ]; then
+        echo "✅ PGP signature verified"
+    elif echo "$GPG_OUT" | grep -qiE "no public key"; then
+        echo "⚠️  PGP signature present but the signing key is not in your keyring —"
+        echo "    SHA256 already passed. Import the NLnet Labs release key from a"
+        echo "    channel you trust to enable this check."
+    else
+        echo "❌ PGP VERIFICATION FAILED — aborting."
+        echo "$GPG_OUT"
+        exit 1
+    fi
+else
+    echo "ℹ️  Skipping PGP check (gpg unavailable or signature not published)."
+fi
 
 echo "⚠️ Building Unbound $LATEST_VER for Zen 2..."
 tar -zxf unbound-latest.tar.gz
@@ -100,6 +149,19 @@ else
     echo "❌ ERROR: New binary failed validation. Aborting swap."
     exit 1
 fi
+# Confirm this really is the OpenSSL build before swapping. Mirrors the
+# BoringSSL check in unbound-update.sh — the whole point of this script is to
+# get OFF BoringSSL, so silently producing another BoringSSL-linked binary
+# (e.g. a stale ./configure cache picking up /opt/boring) would defeat it.
+./unbound -V 2>&1 | grep -qi BoringSSL && {
+    echo "❌ Binary is linked to BoringSSL, not the system OpenSSL. Aborting."
+    echo "   Run 'make distclean' in $BUILD_DIR/$DIR_NAME and retry."
+    exit 1
+}
+./unbound -V 2>&1 | grep -qi 'OpenSSL' || {
+    echo "❌ Could not confirm OpenSSL linkage in the new binary. Aborting."; exit 1
+}
+echo "✅ Linked against system OpenSSL."
 
 # 6. Backup & Atomic Swap
 echo "==== 5. Backing up and Swapping Binaries ===="
@@ -133,6 +195,13 @@ if dig @127.0.0.1 -p 5353 +short +time=2 +tries=1 cloudflare.com >/dev/null 2>&1
     echo "✅ Live query OK"
 else
     echo "❌ Live query FAILED — investigate before trusting this build"
+    echo "   Rollback: cp /usr/sbin/unbound${BACKUP_SUFFIX} /usr/sbin/unbound && systemctl restart unbound"
+fi
+if dig @127.0.0.1 -p 5353 +dnssec +time=2 +tries=1 cloudflare.com 2>/dev/null | grep -q 'flags:.* ad'; then
+    echo "✅ DNSSEC validation OK (ad flag)"
+else
+    echo "⚠️  No ad flag — verify DNSSEC validation"
 fi
 
-echo "🚀 Complete: Unbound $LATEST_VER (Optimized for znver2)"
+echo "🚀 Complete: Unbound $LATEST_VER on system OpenSSL (Optimized for znver2)"
+echo "   Rollback: cp /usr/sbin/unbound${BACKUP_SUFFIX} /usr/sbin/unbound && systemctl restart unbound"
