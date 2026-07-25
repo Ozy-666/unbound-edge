@@ -1,0 +1,9 @@
+# Never publish control/server keypairs — generate locally with
+# `unbound-control-setup -d /etc/unbound/unbound.conf.d`
+*.key
+*.pem
+*.minisig
+
+# Build artefacts
+unbound-*.tar.gz
+unbound-[0-9]*/
