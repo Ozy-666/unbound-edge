@@ -16,7 +16,7 @@ Currently running **Unbound 1.25.2** (22 July 2026) against a pinned BoringSSL.
 Part of the `adguardhome-edge` stack behind [dnsdoh.art](https://dnsdoh.art):
 
 ```
-AGH-Edge (DoH 444 / DoT 853 / plain 53)
+AGH-Edge   443 DoH + DoH3 · 853 DoT + DoQ · 53 plain
   └─> Unbound  127.0.0.1:5353   ← this repo (DNSSEC validation)
         └─> dnscrypt-proxy  127.0.0.1:5053
               └─> Cloudflare DoH · Quad9 DNSCrypt
@@ -51,12 +51,23 @@ commit. Nothing system-wide is touched — Unbound finds it through a baked-in R
 so no `LD_LIBRARY_PATH` is needed. If BoringSSL ever causes trouble,
 `unbound-update-openssl.sh` rebuilds against the system OpenSSL unchanged.
 
-### BoringSSL is pinned, not tracked
+### BoringSSL is pinned, not tracked — bumping is opt-in
 
-`/opt/boring` is pinned to a specific commit and **only rebuilds if it is missing**, so
-an Unbound upgrade does *not* silently pull in a new BoringSSL. Bumping the pin is a
-deliberate act — the library was chosen on measured performance, so re-run the DNSSEC
-flood after any bump rather than assuming parity.
+`/opt/boring` is pinned and **only rebuilds if it is missing**, so a routine Unbound
+security update does *not* silently swap the crypto library underneath it. To move to
+the latest BoringSSL **release tag**:
+
+```sh
+BORING_UPDATE=1 ./unbound-update.sh
+```
+
+That resolves the newest `N.N.N` tag (release points, not rolling `main` — the same
+policy `nginx-update.sh` uses), backs up the previous `/opt/boring`, rebuilds the shared
+libs, **and rebuilds Unbound against them in the same run**. That last part is not
+optional: BoringSSL offers **no stable ABI**, so `/opt/boring` must never be updated
+without recompiling Unbound against the new headers. The script prints a reminder to
+re-run the signed-miss flood afterwards, since the library was chosen on measured
+performance rather than assumed parity.
 
 Unbound's exposure to BoringSSL is **libcrypto only** (DNSSEC signature verification).
 This config runs no TLS at all: no `tls-upstream`, no DoT/DoH listeners — it forwards
@@ -100,12 +111,14 @@ releases with no edit. It will:
    before swapping if either the config check or the BoringSSL linkage check fails.
 7. Back up the current binaries, swap, restart, and verify.
 
-Verify the release tarball before a security update:
-
-```sh
-sha256sum unbound-1.25.2.tar.gz
-# 0d92275c703d5f5f8baba3dab22117dd8c29b495588a5c229768ed6581566600
-```
+The tarball is verified automatically before it is unpacked or built (step 2b): the
+version is detected from the archive, the matching `.sha256` is fetched from NLnet Labs,
+and **a mismatch aborts the run**. Only versioned checksums are published — 
+`unbound-latest.tar.gz.sha256` is a 404 — which is why the version is resolved first.
+The PGP signature is checked too when the signing key is already in your keyring; a
+missing key warns rather than aborts, since importing a key over the same channel would
+prove nothing. For reference, 1.25.2 is
+`0d92275c703d5f5f8baba3dab22117dd8c29b495588a5c229768ed6581566600`.
 
 ### Two binaries are deliberately NOT replaced
 
@@ -155,14 +168,10 @@ two binaries that must not be swapped, and the validate-before-swap ordering.
 
 An honest list of what these scripts do *not* do, for anyone considering them:
 
-1. **No integrity check on the downloaded tarball.** Both fetch
-   `unbound-latest.tar.gz` over HTTPS and build and install it as root without verifying
-   the published SHA256 or the PGP signature. TLS alone authenticates the *host*, not the
-   artefact. For a workflow whose entire purpose is applying security updates, this is the
-   weakest link — verify manually until it is scripted:
-   ```sh
-   sha256sum unbound-latest.tar.gz   # compare with nlnetlabs.nl/downloads/unbound/
-   ```
+1. ~~No integrity check on the downloaded tarball.~~ **Fixed** in `unbound-update.sh`:
+   SHA256 is now verified against NLnet Labs before the archive is unpacked, and a
+   mismatch aborts. **The OpenSSL fallback still has no verification** — check it by hand
+   if you use that path.
 2. **Brief resolution outage.** The service is stopped, three binaries are copied, then it
    is started — a short window with no resolver. Acceptable for a single-host edge, worth
    knowing before scripting it into anything automated.
@@ -174,6 +183,18 @@ An honest list of what these scripts do *not* do, for anyone considering them:
 5. **`make -j` vs targeted targets.** The OpenSSL script builds everything; the BoringSSL
    one builds only the four needed targets. The latter is deliberate — see the
    `unbound-anchor` note above.
+6. ~~Replacing `/opt/boring/lib/*.so` crashed the running daemon.~~ **Fixed.** `cp`
+   truncates and rewrites the *existing* inode, which is still `mmap`'d by the live
+   Unbound — the daemon took a `SIGSEGV` the first time a BoringSSL bump was run
+   (2026-07-25 23:28:50), and only `Restart=always` in the systemd drop-in kept the
+   resolver up. The libraries are now written to a temp name and `rename(2)`-d into
+   place, so the running process keeps its old inode until it is restarted.
+7. ~~A failed download could strand the host mid-upgrade.~~ **Fixed.** The BoringSSL bump
+   used to run *before* the Unbound tarball was fetched, so a transient download failure
+   (seen the same day — `nlnetlabs.nl` returned 0 bytes and `set -e` exited) left a new
+   crypto library behind an Unbound binary linked for the old one. Everything that can
+   fail cheaply now runs first; `/opt/boring` is touched only after the tarball is
+   downloaded and verified.
 
 ---
 
