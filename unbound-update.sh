@@ -2,6 +2,21 @@
 # ============================================================================
 # unbound-update.sh — build latest Unbound against a PINNED private BoringSSL
 # ============================================================================
+# Published at https://github.com/Ozy-666/unbound-edge — for the resolver
+# behind https://dnsdoh.art
+#
+# ⚠️  HOST-SPECIFIC — NOT A PORTABLE INSTALLER. Written for one machine:
+#   * -march=znver2 : AMD Zen 2 only. Binaries SIGILL on other CPUs.
+#   * Hardcoded paths: /root/nginx-build/{unbound-auto,boringssl}, and the
+#     non-standard conf file /etc/unbound/unbound.conf.d/unbound.conf.
+#   * Copies binaries over the DISTRO'S /usr/sbin/unbound — a later
+#     `apt upgrade` of the unbound package silently reverts this build.
+#   * Assumes systemd, Debian-ish layout, root, and port 5353.
+#   * Does NOT verify the tarball's SHA256/PGP signature — check it by hand
+#     against nlnetlabs.nl before trusting a security update.
+# Read it and adapt the configure line rather than running it elsewhere.
+# See the README's "Reusing this on another host" section.
+# ============================================================================
 # Why BoringSSL: on this AMD EPYC 7542 (Zen 2), an end-to-end signed-miss flood
 # showed BoringSSL cuts unbound's crypto CPU ~44%->~39% and lifts worst-case
 # DNSSEC throughput ~+14% / latency -27% vs system OpenSSL 3.0.16 (the gain is

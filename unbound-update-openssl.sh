@@ -1,4 +1,24 @@
 #!/bin/bash
+# ============================================================================
+# unbound-update-openssl.sh — FALLBACK build against the SYSTEM OpenSSL
+# ============================================================================
+# Use only if the BoringSSL build (unbound-update.sh) causes trouble; that one
+# is the primary path and is ~14% faster on worst-case DNSSEC here.
+#
+# Published at https://github.com/Ozy-666/unbound-edge — for the resolver
+# behind https://dnsdoh.art
+#
+# ⚠️  HOST-SPECIFIC — NOT A PORTABLE INSTALLER. Same caveats as
+# unbound-update.sh: -march=znver2 (AMD Zen 2 only, SIGILL elsewhere),
+# hardcoded /root/nginx-build paths, a non-standard conf-file location,
+# binaries copied over the distro's /usr/sbin, systemd assumed, and NO
+# SHA256/PGP verification of the downloaded tarball.
+#
+# Unlike the BoringSSL script, this one does NOT verify the resulting binary's
+# SSL linkage and does NOT check the DNSSEC `ad` flag after the swap — verify
+# by hand if you rely on this path.
+# See the README's "Reusing this on another host" section.
+# ============================================================================
 set -e
 
 BUILD_DIR="/root/nginx-build/unbound-auto"

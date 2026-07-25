@@ -1,7 +1,8 @@
 # unbound-edge
 
 Build tooling and configuration for a **BoringSSL-linked, Zen 2-optimised Unbound**,
-as deployed on the `dnsdoh.art` edge resolver (AMD EPYC 7542, Debian, KVM VPS).
+as deployed on the [dnsdoh.art](https://dnsdoh.art) edge resolver (AMD EPYC 7542,
+Debian, KVM VPS).
 
 Currently running **Unbound 1.25.2** (22 July 2026) against a pinned BoringSSL.
 
@@ -12,8 +13,21 @@ Currently running **Unbound 1.25.2** (22 July 2026) against a pinned BoringSSL.
 > want the upstream code, get it from
 > [NLnetLabs/unbound](https://github.com/NLnetLabs/unbound).
 
-Part of the `adguardhome-edge` stack: AGH-Edge → **Unbound** → dnscrypt-proxy →
-upstream resolvers.
+Part of the `adguardhome-edge` stack behind [dnsdoh.art](https://dnsdoh.art):
+
+```
+AGH-Edge (DoH 444 / DoT 853 / plain 53)
+  └─> Unbound  127.0.0.1:5353   ← this repo (DNSSEC validation)
+        └─> dnscrypt-proxy  127.0.0.1:5053
+              └─> Cloudflare DoH · Quad9 DNSCrypt
+```
+
+Unbound here is a **validating forwarder**, not a full recursor: it validates DNSSEC
+locally but hands recursion to
+[dnscrypt-proxy](https://github.com/Ozy-666/dnscrypt-proxy), which carries queries
+out encrypted. Related repos:
+[dnscrypt-proxy fork](https://github.com/Ozy-666/dnscrypt-proxy) ·
+[AdGuardHome-edge-spec](https://github.com/Ozy-666/AdGuardHome-edge-spec).
 
 ---
 
@@ -110,6 +124,56 @@ cp /usr/sbin/unbound.bak.<timestamp> /usr/sbin/unbound && systemctl restart unbo
 # or, to leave BoringSSL entirely:
 ./unbound-update-openssl.sh
 ```
+
+---
+
+## Reusing this on another host — read first
+
+**These scripts are written for one specific machine and are not portable as-is.**
+They are published because the *approach* is reusable and the trade-offs are
+documented, not because they are a drop-in installer. Running either script unmodified
+on a different box will, at best, waste your time and, at worst, replace working system
+binaries with ones that will not execute.
+
+| Assumption | Where | What breaks elsewhere |
+|---|---|---|
+| `-march=znver2 -mtune=znver2` | both scripts | **The big one.** Binaries built for AMD Zen 2 crash with `SIGILL` on other microarchitectures. Change to `-march=native`, or drop it, before building anywhere else. |
+| `/root/nginx-build/unbound-auto` build dir, `/root/nginx-build/boringssl` source | both | Hardcoded to this host's layout. Nothing auto-creates the parent. |
+| `--with-conf-file=/etc/unbound/unbound.conf.d/unbound.conf` | both | Non-standard: most distros use `/etc/unbound/unbound.conf`. The binary bakes this path in as its default. |
+| Binaries copied into `/usr/sbin/` | both | **Overwrites your distro's package-managed binaries.** A later `apt upgrade` of the `unbound` package silently reverts the custom build. There is no packaging step here. |
+| `systemctl stop/start unbound`, `Type=notify`, systemd drop-in | both | systemd-only. |
+| `dig @127.0.0.1 -p 5353` verification | both | Hardcodes this deployment's port. |
+| `LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2` | systemd drop-in | Debian/Ubuntu amd64 multiarch path. |
+| Runs as root, no `set -u`, no confirmation prompt | both | Assumes an operator who has read the script. |
+
+If you want the same result on your own hardware, the honest advice is to **read the
+scripts and adapt the configure line**, rather than run them. The parts genuinely worth
+copying are the BoringSSL linkage approach, the `HAVE_OPENSSL_ENGINE_H` workaround, the
+two binaries that must not be swapped, and the validate-before-swap ordering.
+
+### Review notes / known rough edges
+
+An honest list of what these scripts do *not* do, for anyone considering them:
+
+1. **No integrity check on the downloaded tarball.** Both fetch
+   `unbound-latest.tar.gz` over HTTPS and build and install it as root without verifying
+   the published SHA256 or the PGP signature. TLS alone authenticates the *host*, not the
+   artefact. For a workflow whose entire purpose is applying security updates, this is the
+   weakest link — verify manually until it is scripted:
+   ```sh
+   sha256sum unbound-latest.tar.gz   # compare with nlnetlabs.nl/downloads/unbound/
+   ```
+2. **Brief resolution outage.** The service is stopped, three binaries are copied, then it
+   is started — a short window with no resolver. Acceptable for a single-host edge, worth
+   knowing before scripting it into anything automated.
+3. **Backups accumulate.** Every run leaves five `.bak.<timestamp>` copies in `/usr/sbin/`
+   and they are never pruned.
+4. **The two scripts verify different things.** The BoringSSL script checks the linkage,
+   runs a live query and confirms the DNSSEC `ad` flag; the OpenSSL fallback checks neither
+   the linkage nor DNSSEC. If you rely on the fallback, verify by hand afterwards.
+5. **`make -j` vs targeted targets.** The OpenSSL script builds everything; the BoringSSL
+   one builds only the four needed targets. The latter is deliberate — see the
+   `unbound-anchor` note above.
 
 ---
 
