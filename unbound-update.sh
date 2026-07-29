@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Ozy-666 (https://dnsdoh.art)
 # ============================================================================
 # unbound-update.sh — build latest Unbound against a PINNED private BoringSSL
 # ============================================================================
