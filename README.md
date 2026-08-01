@@ -279,5 +279,11 @@ changed, is in [`docs/edge-tuning-notes.md`](docs/edge-tuning-notes.md).
 
 ## License
 
-Unbound itself is BSD-licensed by NLnet Labs. The scripts and configuration here are
-provided as-is.
+The scripts, configuration and documentation in this repository are © 2026 Ozy-666
+and released under the **2-clause BSD License** — see [`LICENSE`](LICENSE).
+
+This repository contains no Unbound or BoringSSL source: the build scripts fetch
+both at build time from their own upstreams.
+
+Unbound is © NLnet Labs, under the 3-clause BSD License.
+BoringSSL is © Google, under its own licence terms.
