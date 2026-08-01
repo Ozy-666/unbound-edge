@@ -66,8 +66,45 @@ policy `nginx-update.sh` uses), backs up the previous `/opt/boring`, rebuilds th
 libs, **and rebuilds Unbound against them in the same run**. That last part is not
 optional: BoringSSL offers **no stable ABI**, so `/opt/boring` must never be updated
 without recompiling Unbound against the new headers. The script prints a reminder to
-re-run the signed-miss flood afterwards, since the library was chosen on measured
-performance rather than assumed parity.
+re-measure afterwards, since the library was chosen on measured performance rather
+than assumed parity.
+
+#### Verifying a bump did not cost performance
+
+`bench/` answers that directly. Unbound's whole exposure to BoringSSL is RRSIG
+verification, so the question is not how fast the resolver answers — that is mostly
+network — but whether *this* libcrypto verifies signatures as fast as the one it
+replaced:
+
+```sh
+bench/run-verify-bench.sh /opt/boring.bak.<timestamp> /opt/boring
+```
+
+The bump leaves the previous library in `/opt/boring.bak.<timestamp>`, which is what
+makes the comparison possible. The script builds the same benchmark against both
+prefixes, checks each binary really loads the library it was built for, and runs them
+interleaved and pinned to one core so drift lands on both equally. It reports a median
+and a win count over 8 paired rounds, because the run-to-run spread on a live box is a
+few percent — larger than most differences worth caring about. Every iteration asserts
+the signature actually verifies, so a library cannot post a good number by verifying
+wrongly.
+
+**2026-08-01, `8b43ff0f` → `fd490c05` (0.20260713.0 → 0.20260730.0):**
+
+| Primitive | Old | New | Δ median | New faster in |
+|---|---|---|---|---|
+| ECDSA P-256 verify (alg 13) | 16,043/s | 16,130/s | +0.5% | 6/8 rounds |
+| RSA-2048 verify (alg 8) | 53,986/s | 54,028/s | +0.1% | 4/8 rounds |
+| RSA-1024 verify (legacy ZSK) | 154,292/s | 153,497/s | −0.5% | 4/8 rounds |
+
+Parity. Every delta is inside the noise floor and no primitive regressed. Correctness
+re-checked end-to-end on the live resolver at the same time: ECDSA and RSA chains
+(`cloudflare.com`, `nlnetlabs.nl`, `internetsociety.org`) validate with the `ad` flag,
+and `dnssec-failed.org` still returns SERVFAIL.
+
+A first attempt at three rounds appeared to show ECDSA consistently ~2.6% slower; at
+eight rounds that reversed. Three samples is not enough to separate a real change from
+scheduler noise, which is why the default is higher.
 
 Unbound's exposure to BoringSSL is **libcrypto only** (DNSSEC signature verification).
 This config runs no TLS at all: no `tls-upstream`, no DoT/DoH listeners — it forwards
@@ -90,6 +127,7 @@ conf/unbound.conf                     the deployed server config
 conf/unbound-remote-control.conf      unbound-control setup (keys NOT included)
 systemd/unbound.service.d/override.conf  jemalloc preload, limits, hardening
 docs/edge-tuning-notes.md             NIC/sysctl tuning + rollback
+bench/run-verify-bench.sh             A/B two BoringSSL builds on DNSSEC verify
 ```
 
 ## Build and deploy

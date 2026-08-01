@@ -1,9 +1,11 @@
+
+# Build artefacts
 # Never publish control/server keypairs — generate locally with
 # `unbound-control-setup -d /etc/unbound/unbound.conf.d`
 *.key
-*.pem
 *.minisig
-
-# Build artefacts
+*.pem
+bench/bench-new
+bench/bench-old
 unbound-*.tar.gz
 unbound-[0-9]*/
