@@ -5,7 +5,6 @@
 *.key
 *.minisig
 *.pem
-bench/bench-new
-bench/bench-old
+bench/bench-*
 unbound-*.tar.gz
 unbound-[0-9]*/
