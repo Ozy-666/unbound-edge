@@ -102,6 +102,27 @@ re-checked end-to-end on the live resolver at the same time: ECDSA and RSA chain
 (`cloudflare.com`, `nlnetlabs.nl`, `internetsociety.org`) validate with the `ad` flag,
 and `dnssec-failed.org` still returns SERVFAIL.
 
+**2026-09-05, `30a26e97` → `0ce57bbf` (0.20260803.0 → 0.20260903.0), 15 rounds:**
+
+| Primitive | Old | New | Δ median | New faster in |
+|---|---|---|---|---|
+| ECDSA P-256 verify (alg 13) | 16,122/s | 16,294/s | +1.1% | 12/15 rounds |
+| RSA-2048 verify (alg 8) | 54,542/s | 53,597/s | −1.7% | 6/15 rounds |
+| RSA-1024 verify (legacy ZSK) | 156,527/s | 154,904/s | −1.0% | 4/15 rounds |
+
+No regression — but the median deltas alone do not establish that, and the script's own
+"inside the run-to-run spread" verdict is a hardcoded assumption rather than something it
+measured. What settles it is running the harness with **the same prefix on both sides**,
+giving the deltas an identical library produces: +0.1%, 0.0%, −0.4%, at 7/15, 6/15 and
+6/15 rounds — no systematic advantage to either slot. Against that null, the −1.7%
+RSA-2048 "regression" has a win count of 6/15, *identical* to what the library scores
+against itself (sign test p = 0.61): no directional evidence at all. The ECDSA gain at
+12/15 (p = 0.035) is the only result standing apart from the null, and at n=15 that is
+marginal.
+
+Run the null control before believing a result in either direction. A harness reporting
+no difference and a harness unable to detect a difference look the same from outside.
+
 A first attempt at three rounds appeared to show ECDSA consistently ~2.6% slower; at
 eight rounds that reversed. Three samples is not enough to separate a real change from
 scheduler noise, which is why the default is higher.
@@ -155,8 +176,83 @@ and **a mismatch aborts the run**. Only versioned checksums are published —
 `unbound-latest.tar.gz.sha256` is a 404 — which is why the version is resolved first.
 The PGP signature is checked too when the signing key is already in your keyring; a
 missing key warns rather than aborts, since importing a key over the same channel would
-prove nothing. For reference, 1.25.2 is
+prove nothing — see [The NLnet Labs release key](#the-nlnet-labs-release-key) for where
+that key comes from and what it is actually worth. For reference, 1.25.2 is
 `0d92275c703d5f5f8baba3dab22117dd8c29b495588a5c229768ed6581566600`.
+
+### The NLnet Labs release key
+
+Why it is imported, and what that is worth.
+
+The SHA256 check above is fetched from `nlnetlabs.nl` over HTTPS — the same host that
+serves the tarball. It proves the download was not corrupted in transit. It proves
+nothing if that host is the thing compromised: whoever can replace
+`unbound-latest.tar.gz` can replace `unbound-<version>.tar.gz.sha256` in the same breath.
+The PGP signature is the only link in the chain without that weakness, and it is worth
+nothing until the signing key is known from somewhere else.
+
+The signature on 1.26.0 names:
+
+```
+Signature made Tue Aug  4 10:16:18 2026
+      using RSA key 231018690C4D903EF419146AA144323DEAACDF45
+      "NLnet Labs releases signing key G2 <releases@nlnetlabs.nl>"
+```
+
+That fingerprint is **self-asserted**: an attacker who swapped the tarball would swap the
+`.asc` alongside it and name their own key. It has to be corroborated from outside the
+download path. What is actually available, checked 2026-09-05:
+
+| Channel | Result |
+|---|---|
+| `OPENPGPKEY` record under `nlnetlabs.nl` | none published |
+| Web Key Directory (`/.well-known/openpgpkey/`) | HTTP 404, no `openpgpkey.` host |
+| Already present in a local or `/etc/apt` keyring | no |
+| Debian `unbound` 1.26.0-2 `debian/upstream/signing-key.asc` | **matches** `2310…DF45` |
+| Ubuntu `unbound` 1.19.2 `debian/upstream/signing-key.asc` | a different key — see below |
+
+The DNS route is the one worth wanting: NLnet Labs' zone is DNSSEC-signed and this host
+runs a validating resolver, so an `OPENPGPKEY` record would have been an independently
+anchored answer requiring no third party. It does not exist.
+
+So the key is taken from **Debian's packaging of the same upstream version line** — a
+different organisation, on different infrastructure from the download server:
+
+```sh
+curl -fsSLO https://sources.debian.org/data/main/u/unbound/1.26.0-2/debian/upstream/signing-key.asc
+gpg --show-keys --with-fingerprint signing-key.asc
+#   expect 2310 1869 0C4D 903E F419  146A A144 323D EAAC DF45
+gpg --import signing-key.asc
+```
+
+**The strongest chain available on this host does not corroborate it.** `apt-get source
+unbound` verifies against an archive key already trusted here, but Ubuntu ships 1.19.2 and
+its packaging carries `EDFAA3F2CA4E6EB05681AF8E9F6F1C2D7E045F8D`,
+`W.C.A. Wijngaards <wouter@nlnetlabs.nl>` — a personal key predating the rotation to an
+organisational release key. G2 is **not cross-certified** by it; its only signature is its
+own self-sig. Trust therefore does not transfer from the one key rooted in something
+already installed. That is a real limitation, not a footnote.
+
+**The key is imported but deliberately not marked trusted.** `gpg --verify` still prints
+`[unknown]` and `WARNING: This key is not certified with a trusted signature`, and the
+script keys off the exit status, which is `0` for a good signature from an uncertified
+key. Setting ownertrust or locally signing it would silence a warning that is accurate:
+one HTTPS fetch from a third party's source tree is not grounds for asserting the key
+belongs to NLnet Labs.
+
+**What the import buys:** it defeats a compromise of the `nlnetlabs.nl` download path,
+which the SHA256 check alone does not. It does not defeat someone able to place a bad key
+into Debian's packaging. That is the honest boundary.
+
+Confirm the check can fail before trusting it to pass — a signature check that cannot
+report a failure is indistinguishable from one that passes:
+
+```sh
+cp unbound-latest.tar.gz t.tar.gz
+printf '\xff' | dd of=t.tar.gz bs=1 seek=500000 count=1 conv=notrunc status=none
+gpg --verify unbound-latest.tar.gz.asc t.tar.gz   # must print BAD signature, exit 1
+rm -f t.tar.gz
+```
 
 ### Two binaries are deliberately NOT replaced
 
@@ -208,7 +304,9 @@ An honest list of what these scripts do *not* do, for anyone considering them:
 
 1. ~~No integrity check on the downloaded tarball.~~ **Fixed in both scripts.** SHA256 is
    verified against NLnet Labs before the archive is unpacked, and a mismatch aborts;
-   PGP is checked when the signing key is already trusted locally. The block is
+   PGP is checked when the signing key is already in the keyring — see
+   [The NLnet Labs release key](#the-nlnet-labs-release-key) for its provenance and the
+   limits of that corroboration. The block is
    duplicated rather than shared, deliberately — the OpenSSL script is the break-glass
    path and must stay runnable on its own.
 2. **Brief resolution outage.** The service is stopped, three binaries are copied, then it
