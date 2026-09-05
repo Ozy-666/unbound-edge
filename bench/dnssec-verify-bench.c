@@ -28,7 +28,14 @@
 
 #include <openssl/bn.h>
 #include <openssl/ec.h>
+/* BoringSSL splits EC_KEY into its own header; OpenSSL keeps it in ec.h.
+ * Including ec.h first is what defines OPENSSL_IS_BORINGSSL, so this test is
+ * only valid here and not above. Keeping the source buildable against BOTH
+ * libraries is the point: the "BoringSSL vs OpenSSL" claim can only be
+ * re-verified if the same benchmark compiles against each of them. */
+#ifdef OPENSSL_IS_BORINGSSL
 #include <openssl/ec_key.h>
+#endif
 #include <openssl/evp.h>
 #include <openssl/obj_mac.h>
 #include <openssl/rsa.h>
