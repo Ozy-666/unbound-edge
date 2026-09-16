@@ -4,7 +4,7 @@ Build tooling and configuration for a **BoringSSL-linked, Zen 2-optimised Unboun
 as deployed on the [dnsdoh.art](https://dnsdoh.art) edge resolver (AMD EPYC 7542,
 Debian, KVM VPS).
 
-Currently running **Unbound 1.25.2** (22 July 2026) against a pinned BoringSSL.
+Currently running **Unbound 1.26.1** (16 September 2026) against a pinned BoringSSL.
 
 > **This is not a fork of Unbound.** No upstream source is patched or vendored here —
 > every customisation lives in build flags, configuration, and the systemd unit.
@@ -177,8 +177,8 @@ and **a mismatch aborts the run**. Only versioned checksums are published —
 The PGP signature is checked too when the signing key is already in your keyring; a
 missing key warns rather than aborts, since importing a key over the same channel would
 prove nothing — see [The NLnet Labs release key](#the-nlnet-labs-release-key) for where
-that key comes from and what it is actually worth. For reference, 1.25.2 is
-`0d92275c703d5f5f8baba3dab22117dd8c29b495588a5c229768ed6581566600`.
+that key comes from and what it is actually worth. For reference, 1.26.1 is
+`35a6dc0e425a9282c3426d9a3043144011bf0534aed4b73ab62c52aee0af1503`.
 
 ### The NLnet Labs release key
 
@@ -191,17 +191,17 @@ nothing if that host is the thing compromised: whoever can replace
 The PGP signature is the only link in the chain without that weakness, and it is worth
 nothing until the signing key is known from somewhere else.
 
-The signature on 1.26.0 names:
+The signature on 1.26.1 names:
 
 ```
-Signature made Tue Aug  4 10:16:18 2026
+Signature made Wed Sep 16 10:37:18 2026 EEST
       using RSA key 231018690C4D903EF419146AA144323DEAACDF45
       "NLnet Labs releases signing key G2 <releases@nlnetlabs.nl>"
 ```
 
 That fingerprint is **self-asserted**: an attacker who swapped the tarball would swap the
 `.asc` alongside it and name their own key. It has to be corroborated from outside the
-download path. What is actually available, checked 2026-09-05:
+download path. What is actually available, re-checked 2026-09-16:
 
 | Channel | Result |
 |---|---|
@@ -336,39 +336,29 @@ An honest list of what these scripts do *not* do, for anyone considering them:
 
 ---
 
-## Security posture: Unbound 1.25.2
+## Security posture: Unbound 1.26.1
 
-1.25.2 is a **security release fixing 24 CVEs**. Two whole CVE clusters miss this
-deployment because the features are *not compiled in* — there is no `--with-libngtcp2`
-(no DNS-over-QUIC) and no `--enable-dnscrypt`:
+1.26.1 is a **consolidated security release fixing 9 CVEs**, published 16 September 2026.
+Three of them miss this deployment because the feature is *not compiled in* or *not
+configured*:
 
 | Not reachable here | Why |
 |---|---|
-| CVE-2026-14586, -32665, -41637, -55991 | DNS-over-QUIC — not built |
-| CVE-2026-40691, -55990 | DNSCrypt — not built |
-| CVE-2026-50046 | DoT forwarding — no `tls-upstream` configured |
-| CVE-2026-50243, -50248, -55717 | needs `response-ip` / `rpz` / auth zones — none configured |
-| CVE-2026-54478 | needs `proxy-protocol` — not configured |
-| CVE-2026-55973 | needs `dns-error-reporting: yes` — default off |
-| CVE-2026-55708 | needs `views` with `unbound-control` local data — not configured |
-| CVE-2026-44621 | affects **libunbound applications**; this host runs the daemon |
+| CVE-2026-82720 | Use-after-free in the DoH stream cleanup path — DoH is **not built**: `HAVE_NGHTTP2` is undefined in `config.h` and `libnghttp2` does not appear in the deployed binary's `ldd` output |
+| CVE-2026-78227 | Use-after-free in the DoQ stream output buffer on reset re-transmission — DNS-over-QUIC is **not built** (`HAVE_NGTCP2` undefined, no `--with-libngtcp2`) |
+| CVE-2026-77955 | ZONEMD verification bypass window — ZONEMD applies to auth zones; none are configured and `unbound-control list_auth_zones` returns empty |
 
-The rest **do** apply to this configuration and are the reason to upgrade promptly —
-cache-poisoning and memory-safety issues in the validator and iterator, which are
-exactly the paths a validating recursor exercises on every query:
+The remaining six **do** apply, and are the reason to upgrade promptly. They sit in the
+validator and iterator — the paths a validating resolver exercises on every query:
 
 | Applies here | Issue |
 |---|---|
-| CVE-2026-56416 | heap buffer overflow canonicalising RDATA containing a domain name |
-| CVE-2026-52863 | memory corruption → crash / DoS |
-| CVE-2026-44690 | cross-zone wildcard cache poisoning via `RRSIG.labels` manipulation |
-| CVE-2026-46582 | wildcard replay poisoning in the serve-expired path (`serve-expired: yes`) |
-| CVE-2026-50252 | cache poisoning by mapping source-port population per thread |
-| CVE-2026-50251 | attacker-supplied `0.0.0.0`/`::` glue triggers a defensive full-cache flush |
-| CVE-2026-42955 | A/AAAA TTL clamp — 'ghost domain' delegation renewal via glue |
-| CVE-2026-44687 | off-by-one in `harden-below-nxdomain` can shadow a stub/forward zone |
-| CVE-2026-50045 | `max-global-quota` reset by DNSSEC validation restarts |
-| CVE-2026-56444 | `discard-timeout` + `serve-expired-client-timeout` interaction |
+| CVE-2026-81642 | Heap buffer overflow and **possible remote code execution** when digesting DNSKEY. The most serious of the set for this deployment: DNSKEY digesting is on the validation path for every signed zone. |
+| CVE-2026-81634 | Possible heap buffer overflow during DNSSEC canonicalisation |
+| CVE-2026-85501 | "Retrap" — algorithmic-complexity attacks against DNSSEC validation |
+| CVE-2026-82717 | CNAME synthesis could lead to heap corruption |
+| CVE-2026-77860 | `serve-expired` can bypass `wait-limit` — `serve-expired: yes` is set here (confirmed live via `unbound-control get_option serve-expired`) |
+| CVE-2026-80225 | Degradation of service from continuous queries on one TCP/DoT connection. There is no DoT listener and the TCP listener binds `127.0.0.1` only, so this is not reachable directly from the internet — but queries still arrive over it from the local forwarder, so the exposure is reduced, not removed. |
 
 > This table is **operational triage** for this specific build and config, derived from
 > the configure flags and `conf/unbound.conf` — not an upstream advisory. Check the
