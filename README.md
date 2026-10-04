@@ -25,7 +25,7 @@ Unbound here is a **validating forwarder**, not a full recursor: it validates DN
 locally and hands recursion to Cloudflare and Quad9 over DoT. Until 2026-10-04 it
 forwarded to [dnscrypt-proxy](https://github.com/Ozy-666/dnscrypt-proxy) on
 `127.0.0.1:5053`; unbound's own DoT measured as fast or faster, so that hop was
-removed (dnscrypt-proxy is kept installed, disabled, for rollback). Related repos:
+removed (dnscrypt-proxy itself was uninstalled the same day). Related repos:
 [dnscrypt-proxy fork](https://github.com/Ozy-666/dnscrypt-proxy) ·
 [AdGuardHome-edge-spec](https://github.com/Ozy-666/AdGuardHome-edge-spec).
 
