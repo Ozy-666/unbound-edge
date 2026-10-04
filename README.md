@@ -4,7 +4,8 @@ Build tooling and configuration for a **BoringSSL-linked, Zen 2-optimised Unboun
 as deployed on the [dnsdoh.art](https://dnsdoh.art) edge resolver (AMD EPYC 7542,
 Debian, KVM VPS).
 
-Currently running **Unbound 1.26.1** (16 September 2026) against a pinned BoringSSL.
+Currently running **Unbound 1.26.1** (16 September 2026) against a pinned BoringSSL,
+**0.20260929.0** since 4 October 2026.
 
 > **This is not a fork of Unbound.** No upstream source is patched or vendored here —
 > every customisation lives in build flags, configuration, and the systemd unit.
@@ -13,20 +14,22 @@ Currently running **Unbound 1.26.1** (16 September 2026) against a pinned Boring
 > want the upstream code, get it from
 > [NLnetLabs/unbound](https://github.com/NLnetLabs/unbound).
 
-Part of the `adguardhome-edge` stack behind [dnsdoh.art](https://dnsdoh.art):
+The resolver behind [dnsdoh.art](https://dnsdoh.art):
 
 ```
-AGH-Edge   443 DoH + DoH3 · 853 DoT + DoQ · 53 plain
-  └─> Unbound  127.0.0.1:5353   ← this repo (DNSSEC validation)
-        └─> DoT  Cloudflare 1.1.1.1:853 · Quad9 9.9.9.10:853
+nginx      443 DoH + DoH3 (TLS, ECH)
+  └─> dnsdist  also serves 53 plain · 853 DoT + DoQ
+        └─> Unbound  127.0.0.1:5353   ← this repo (DNSSEC validation)
+              └─> DoT  Cloudflare 1.1.1.1:853 · Quad9 9.9.9.10:853
 ```
 
 Unbound here is a **validating forwarder**, not a full recursor: it validates DNSSEC
-locally and hands recursion to Cloudflare and Quad9 over DoT. Until 2026-10-04 it
-forwarded to [dnscrypt-proxy](https://github.com/Ozy-666/dnscrypt-proxy) on
-`127.0.0.1:5053`; unbound's own DoT measured as fast or faster, so that hop was
-removed (dnscrypt-proxy itself was uninstalled the same day). Related repos:
-[dnscrypt-proxy fork](https://github.com/Ozy-666/dnscrypt-proxy) ·
+locally and hands recursion to Cloudflare and Quad9 over DoT. The front end is
+[dnsdist](https://www.dnsdist.org/) since 2026-10-04, which replaced the AdGuardHome-edge
+build; on the same day unbound stopped forwarding to dnscrypt-proxy on `127.0.0.1:5053`
+and began speaking DoT itself (it measured as fast or faster), and dnscrypt-proxy was
+uninstalled. The repos of that earlier stack are archived and kept read-only for
+reference: [dnscrypt-proxy fork](https://github.com/Ozy-666/dnscrypt-proxy) ·
 [AdGuardHome-edge-spec](https://github.com/Ozy-666/AdGuardHome-edge-spec).
 
 ---
@@ -71,10 +74,12 @@ than assumed parity.
 
 #### Verifying a bump did not cost performance
 
-`bench/` answers that directly. Unbound's whole exposure to BoringSSL is RRSIG
-verification, so the question is not how fast the resolver answers — that is mostly
-network — but whether *this* libcrypto verifies signatures as fast as the one it
-replaced:
+`bench/` answers the DNSSEC half directly. Unbound's hot-path exposure to BoringSSL is
+RRSIG verification and, since it forwards over DoT, TLS handshakes to the forwarders —
+connections there turn over within seconds, so handshakes are steady work, and this
+bench does not measure them. For signatures the question is not how fast the resolver
+answers — that is mostly network — but whether *this* libcrypto verifies them as fast
+as the one it replaced:
 
 ```sh
 bench/run-verify-bench.sh /opt/boring.bak.<timestamp> /opt/boring
@@ -133,6 +138,13 @@ verifying their certificates against the system bundle. There are still no DoT/D
 listeners, so server-side TLS CVEs do not apply; client-side TLS CVEs are reachable only
 through those two authenticated upstreams. Until 2026-10-04 this config ran no TLS at all
 (plaintext to dnscrypt-proxy on `127.0.0.1@5053`).
+
+Being a TLS client also widens which BoringSSL code is live. This config sets no groups,
+so unbound offers the library defaults; a `bssl client` with those same defaults
+negotiated the hybrid post-quantum key share X25519MLKEM768 with Cloudflare and X25519
+with Quad9 (checked 2026-10-04), so ML-KEM is on the path too. Unbound does no CRL
+checking, so CRL-matching fixes such as CVE-2026-35189 (fixed in 0.20260929.0) do not
+reach it.
 
 > **Note for the wider stack:** nginx on the same host uses a *separate*
 > `boringssl-nginx` checkout that tracks the latest BoringSSL **tag** and links
@@ -382,8 +394,8 @@ validator and iterator — the paths a validating resolver exercises on every qu
 
 ## Configuration notes
 
-The resolver listens on `127.0.0.1:5353` only and forwards to dnscrypt-proxy — it is not
-internet-facing. Highlights:
+The resolver listens on `127.0.0.1:5353` only, behind dnsdist, and forwards over DoT to
+Cloudflare and Quad9 — it is not internet-facing. Highlights:
 
 - **Validating recursor**: `module-config: "validator iterator"`, auto trust anchor,
   `harden-*` hardening, `aggressive-nsec`, `qname-minimisation`.
