@@ -18,14 +18,14 @@ Part of the `adguardhome-edge` stack behind [dnsdoh.art](https://dnsdoh.art):
 ```
 AGH-Edge   443 DoH + DoH3 · 853 DoT + DoQ · 53 plain
   └─> Unbound  127.0.0.1:5353   ← this repo (DNSSEC validation)
-        └─> dnscrypt-proxy  127.0.0.1:5053
-              └─> Cloudflare DoH · Quad9 DNSCrypt
+        └─> DoT  Cloudflare 1.1.1.1:853 · Quad9 9.9.9.10:853
 ```
 
 Unbound here is a **validating forwarder**, not a full recursor: it validates DNSSEC
-locally but hands recursion to
-[dnscrypt-proxy](https://github.com/Ozy-666/dnscrypt-proxy), which carries queries
-out encrypted. Related repos:
+locally and hands recursion to Cloudflare and Quad9 over DoT. Until 2026-10-04 it
+forwarded to [dnscrypt-proxy](https://github.com/Ozy-666/dnscrypt-proxy) on
+`127.0.0.1:5053`; unbound's own DoT measured as fast or faster, so that hop was
+removed (dnscrypt-proxy is kept installed, disabled, for rollback). Related repos:
 [dnscrypt-proxy fork](https://github.com/Ozy-666/dnscrypt-proxy) ·
 [AdGuardHome-edge-spec](https://github.com/Ozy-666/AdGuardHome-edge-spec).
 
@@ -127,10 +127,12 @@ A first attempt at three rounds appeared to show ECDSA consistently ~2.6% slower
 eight rounds that reversed. Three samples is not enough to separate a real change from
 scheduler noise, which is why the default is higher.
 
-Unbound's exposure to BoringSSL is **libcrypto only** (DNSSEC signature verification).
-This config runs no TLS at all: no `tls-upstream`, no DoT/DoH listeners — it forwards
-plaintext to dnscrypt-proxy on `127.0.0.1@5053`, which terminates the encryption. TLS-path
-CVEs in BoringSSL therefore do not reach this daemon.
+Unbound's exposure to BoringSSL is **libcrypto** (DNSSEC signature verification) **and,
+since 2026-10-04, the libssl client path**: it forwards over DoT to Cloudflare and Quad9,
+verifying their certificates against the system bundle. There are still no DoT/DoH
+listeners, so server-side TLS CVEs do not apply; client-side TLS CVEs are reachable only
+through those two authenticated upstreams. Until 2026-10-04 this config ran no TLS at all
+(plaintext to dnscrypt-proxy on `127.0.0.1@5053`).
 
 > **Note for the wider stack:** nginx on the same host uses a *separate*
 > `boringssl-nginx` checkout that tracks the latest BoringSSL **tag** and links
@@ -368,7 +370,7 @@ validator and iterator — the paths a validating resolver exercises on every qu
 | CVE-2026-85501 | "Retrap" — algorithmic-complexity attacks against DNSSEC validation |
 | CVE-2026-82717 | CNAME synthesis could lead to heap corruption |
 | CVE-2026-77860 | `serve-expired` can bypass `wait-limit` — `serve-expired: yes` is set here (confirmed live via `unbound-control get_option serve-expired`) |
-| CVE-2026-80225 | Degradation of service from continuous queries on one TCP/DoT connection. There is no DoT listener and the TCP listener binds `127.0.0.1` only, so this is not reachable directly from the internet — but queries still arrive over it from the local forwarder, so the exposure is reduced, not removed. |
+| CVE-2026-80225 | Degradation of service from continuous queries on one TCP/DoT connection. There is no DoT listener and the TCP listener binds `127.0.0.1` only, so this is not reachable directly from the internet — but queries still arrive over it from the local front end, so the exposure is reduced, not removed. |
 
 > This table is **operational triage** for this specific build and config, derived from
 > the configure flags and `conf/unbound.conf` — not an upstream advisory. Check the
