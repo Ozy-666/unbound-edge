@@ -168,7 +168,9 @@ releases with no edit. It will:
    detects the *system* header, which otherwise breaks `crypt_openssl.c`.
 6. Build the daemon and control tools, validate against the **live** config, and abort
    before swapping if either the config check or the BoringSSL linkage check fails.
-7. Back up the current binaries, swap, restart, and verify.
+7. Back up the current binaries, swap, restart, and verify: a NOERROR live query, the `ad`
+   flag on `cloudflare.com`, and `dnssec-failed.org` rejected by *this* validator (SERVFAIL
+   with EDE 6). Any failed check exits non-zero with the rollback command.
 
 The tarball is verified automatically before it is unpacked or built (step 2b): the
 version is detected from the archive, the matching `.sha256` is fetched from NLnet Labs,
@@ -318,6 +320,12 @@ An honest list of what these scripts do *not* do, for anyone considering them:
    the expected SSL linkage *before* swapping (the OpenSSL script aborts if it somehow
    produced a BoringSSL-linked binary, e.g. from a stale `./configure` cache), then check
    the live query and the DNSSEC `ad` flag afterwards.
+   Since 2026-10-04 the post-swap checks also fail: the live query used to pass on any
+   reply (dig exits 0 on SERVFAIL), the `ad` check only warned, and there was no negative
+   test. Now the live query needs NOERROR, the `ad` check is fatal, and `dnssec-failed.org`
+   must come back SERVFAIL **with EDE 6** — a bare SERVFAIL is not enough, because the
+   forwarders validate too and return SERVFAIL to a non-validating unbound. Checked against
+   a validating, a non-validating, a dead-upstream and an absent resolver.
 5. **`make -j` vs targeted targets.** The OpenSSL script builds everything; the BoringSSL
    one builds only the four needed targets. The latter is deliberate — see the
    `unbound-anchor` note above.

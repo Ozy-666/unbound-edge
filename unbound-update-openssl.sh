@@ -185,7 +185,13 @@ systemctl start unbound
 
 # Verify
 echo "==== 6. Verification ===="
-sleep 1
+FAILED=0
+# Wait until the daemon answers (any reply) rather than a fixed sleep, so the
+# fatal checks below never fire on a resolver that is merely still starting.
+for _ in $(seq 20); do
+    dig @127.0.0.1 -p 5353 +time=1 +tries=1 . SOA >/dev/null 2>&1 && break
+    sleep 0.5
+done
 unbound -V | head -3
 NEWPID=$(pgrep -x unbound || true)
 if [ -n "$NEWPID" ] && grep -q jemalloc /proc/$NEWPID/maps 2>/dev/null; then
@@ -193,17 +199,32 @@ if [ -n "$NEWPID" ] && grep -q jemalloc /proc/$NEWPID/maps 2>/dev/null; then
 else
     echo "⚠️  jemalloc NOT mapped — check LD_PRELOAD in /etc/systemd/system/unbound.service.d/override.conf"
 fi
-if dig @127.0.0.1 -p 5353 +short +time=2 +tries=1 cloudflare.com >/dev/null 2>&1; then
+# dig exits 0 on ANY reply, SERVFAIL included — check the rcode, not the exit.
+if dig @127.0.0.1 -p 5353 +time=5 +tries=1 cloudflare.com 2>/dev/null | grep -q 'status: NOERROR'; then
     echo "✅ Live query OK"
 else
-    echo "❌ Live query FAILED — investigate before trusting this build"
-    echo "   Rollback: cp /usr/sbin/unbound${BACKUP_SUFFIX} /usr/sbin/unbound && systemctl restart unbound"
+    echo "❌ Live query FAILED (no NOERROR for cloudflare.com)"; FAILED=1
 fi
-if dig @127.0.0.1 -p 5353 +dnssec +time=2 +tries=1 cloudflare.com 2>/dev/null | grep -q 'flags:.* ad'; then
+if dig @127.0.0.1 -p 5353 +dnssec +time=5 +tries=1 cloudflare.com 2>/dev/null | grep -q 'flags:.* ad'; then
     echo "✅ DNSSEC validation OK (ad flag)"
 else
-    echo "⚠️  No ad flag — verify DNSSEC validation"
+    echo "❌ No ad flag on cloudflare.com — DNSSEC validation is not working"; FAILED=1
+fi
+# The negative test: a deliberately broken chain must be rejected BY THIS
+# validator. A bare SERVFAIL proves nothing here — the forwarders validate too
+# and return SERVFAIL to a non-validating unbound. Only unbound's own rejection
+# carries EDE 6 (DNSSEC Bogus); needs `ede: yes` (set in conf/unbound.conf).
+NEG=$(dig @127.0.0.1 -p 5353 +time=5 +tries=1 dnssec-failed.org 2>/dev/null || true)
+if echo "$NEG" | grep -q 'status: SERVFAIL' && echo "$NEG" | grep -q 'EDE: 6'; then
+    echo "✅ Broken chain rejected by this validator (dnssec-failed.org SERVFAIL, EDE 6)"
+else
+    echo "❌ dnssec-failed.org not rejected by this validator (want SERVFAIL + EDE 6)"; FAILED=1
 fi
 
-echo "🚀 Complete: Unbound $LATEST_VER on system OpenSSL (Optimized for znver2)"
+if [ "$FAILED" = "0" ]; then
+    echo "🚀 Complete: Unbound $LATEST_VER on system OpenSSL (Optimized for znver2)"
+else
+    echo "❌ VERIFICATION FAILED — the new binary is live but NOT trusted. Roll back:"
+fi
 echo "   Rollback: cp /usr/sbin/unbound${BACKUP_SUFFIX} /usr/sbin/unbound && systemctl restart unbound"
+exit "$FAILED"
