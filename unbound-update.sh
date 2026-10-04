@@ -151,6 +151,16 @@ wget -qO unbound-latest.tar.gz https://nlnetlabs.nl/downloads/unbound/unbound-la
 DIR_NAME=$(tar -tzf unbound-latest.tar.gz | head -1 | cut -f1 -d"/")
 LATEST_VER=${DIR_NAME#unbound-}
 
+# Nothing to do when this version is already running on BoringSSL: a rebuild
+# would still stop unbound and drop its cache. FORCE=1 rebuilds anyway, and
+# BORING_UPDATE=1 always proceeds (new crypto library under the same Unbound).
+CUR_VER=$(/usr/sbin/unbound -V 2>/dev/null | awk '/^Version/{print $2}')
+if [ "$CUR_VER" = "$LATEST_VER" ] && /usr/sbin/unbound -V 2>/dev/null | grep -qi BoringSSL \
+   && [ "${FORCE:-0}" != "1" ] && [ "$BORING_UPDATE" != "1" ]; then
+    echo "✅ Unbound ${CUR_VER} on BoringSSL is already installed — nothing to do (FORCE=1 rebuilds)."
+    exit 0
+fi
+
 # ---------------------------------------------------------------------------
 # 2b. Verify the tarball BEFORE unpacking or building it as root.
 #     HTTPS authenticates nlnetlabs.nl, not the artefact. Only versioned

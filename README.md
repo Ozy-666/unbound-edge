@@ -162,7 +162,9 @@ releases with no edit. It will:
 
 1. Ensure the pinned BoringSSL exists in `/opt/boring` (idempotent; builds only if absent).
 2. Pre-flight the jemalloc `LD_PRELOAD` override.
-3. Download and unpack the latest Unbound.
+3. Download and unpack the latest Unbound — or stop there, changing nothing, if that version
+   is already running on BoringSSL (`FORCE=1` rebuilds anyway; `BORING_UPDATE=1` always
+   proceeds). A rebuild restarts unbound and drops its cache, so a no-op run should not.
 4. Configure against BoringSSL with `-march=znver2 -O3 -flto`, PIE and RELRO-now.
 5. Undefine `HAVE_OPENSSL_ENGINE_H` — BoringSSL has no ENGINE support, but `configure`
    detects the *system* header, which otherwise breaks `crypt_openssl.c`.
