@@ -25,8 +25,8 @@ nginx      443 DoH + DoH3 (TLS, ECH)
 
 Unbound here is a **validating forwarder**, not a full recursor: it validates DNSSEC
 locally and hands recursion to Cloudflare and Quad9 over DoT. The front end is
-[dnsdist](https://www.dnsdist.org/) since 2026-10-04, which replaced the AdGuardHome-edge
-build; on the same day unbound stopped forwarding to dnscrypt-proxy on `127.0.0.1:5053`
+[dnsdist](https://www.dnsdist.org/) since 2026-09-27, which replaced the AdGuardHome-edge
+build; on 2026-10-04 unbound stopped forwarding to dnscrypt-proxy on `127.0.0.1:5053`
 and began speaking DoT itself (it measured as fast or faster), and dnscrypt-proxy was
 uninstalled. The repos of that earlier stack are archived and kept read-only for
 reference: [dnscrypt-proxy fork](https://github.com/Ozy-666/dnscrypt-proxy) ·
