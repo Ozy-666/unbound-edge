@@ -18,7 +18,7 @@ The resolver behind [dnsdoh.art](https://dnsdoh.art):
 
 ```
 nginx      443 DoH + DoH3 (TLS, ECH)
-  └─> dnsdist  also serves 53 plain · 853 DoT + DoQ
+  └─> dnsdist  also serves 53 plain · 853 DoT + DoQ   ← dnsdoh-edge
         └─> Unbound  127.0.0.1:5353   ← this repo (DNSSEC validation)
               └─> DoT  Cloudflare 1.1.1.1:853 · Quad9 9.9.9.10:853
 ```
@@ -31,6 +31,10 @@ and began speaking DoT itself (it measured as fast or faster), and dnscrypt-prox
 uninstalled. The repos of that earlier stack are archived and kept read-only for
 reference: [dnscrypt-proxy fork](https://github.com/Ozy-666/dnscrypt-proxy) ·
 [AdGuardHome-edge-spec](https://github.com/Ozy-666/AdGuardHome-edge-spec).
+
+The dnsdist build and configuration, the blocklist compiler, the Unbound drop-ins that sit
+on top of this repo's base configuration, and the parity tests are published in
+[dnsdoh-edge](https://github.com/Ozy-666/dnsdoh-edge).
 
 ---
 
